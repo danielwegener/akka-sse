@@ -1,0 +1,30 @@
+<html>
+<head>
+
+</head>
+<body>
+    <ul id="eventList">
+
+    </ul>
+    <script type="application/javascript">
+
+        var evtSource = new EventSource("/");
+        var eventList = document.getElementById("eventList");
+        evtSource.onmessage = function(e) {
+            var newElement = document.createElement("li");
+            newElement.innerHTML = "message: " + e.data;
+            eventList.appendChild(newElement);
+        };
+
+        evtSource.onerror = function(e) {
+            var newElement = document.createElement("li");
+            newElement.innerHTML = "EventSource failed: "+ e;
+            newElement.className = "error";
+            eventList.appendChild(newElement)
+        };
+
+    </script>
+
+</body>
+
+</html>

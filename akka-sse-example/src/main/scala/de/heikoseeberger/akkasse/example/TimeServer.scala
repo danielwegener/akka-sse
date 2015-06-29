@@ -16,15 +16,17 @@
 
 package de.heikoseeberger.akkasse.example
 
-import akka.actor.{ ActorRef, ActorSystem, Props }
+import java.time.format.DateTimeFormatter
+import java.time.{ZoneId, LocalTime, ZonedDateTime, Instant}
+
+import akka.actor.{ActorSystem, Props}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.Directives
 import akka.stream.actor.ActorPublisher
 import akka.stream.scaladsl.Source
-import akka.stream.{ ActorMaterializer, Materializer }
-import de.heikoseeberger.akkasse.{ EventPublisher, EventStreamMarshalling, ServerSentEvent }
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
+import akka.stream.{ActorMaterializer, Materializer}
+import de.heikoseeberger.akkasse.{EventPublisher, EventStreamMarshalling, ServerSentEvent}
+
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.DurationInt
 
@@ -34,13 +36,13 @@ object TimeServer {
     def props: Props = Props(new TimeEventPublisher)
   }
 
-  class TimeEventPublisher extends EventPublisher[LocalTime](10, 1.second) {
+  class TimeEventPublisher extends EventPublisher[Instant](10, 1.second) {
     import context.dispatcher
 
     context.system.scheduler.schedule(2.seconds, 2.seconds, self, "now")
 
     override protected def receiveEvent = {
-      case "now" => onEvent(LocalTime.now())
+      case "now" => onEvent(Instant.now())
     }
   }
 
@@ -49,20 +51,35 @@ object TimeServer {
     implicit val mat = ActorMaterializer()
     import system.dispatcher
     Http().bindAndHandle(route(system), "127.0.0.1", 9000)
+    Console.println("Open in browser: http://127.0.0.1:9000/index.html")
   }
 
   def route(system: ActorSystem)(implicit ec: ExecutionContext, mat: Materializer) = {
     import Directives._
     import EventStreamMarshalling._
     get {
-      complete {
-        val timeEventPublisher = system.actorOf(TimeEventPublisher.props)
-        Source(ActorPublisher[ServerSentEvent](timeEventPublisher))
+      path( "index.html") {
+        getFromResource("index.html")
+      } ~
+      optionalHeaderValueByName("Last-Event-ID") { eventId =>
+        complete {
+          val timeEventPublisher = system.actorOf(TimeEventPublisher.props)
+
+
+          Source.apply[ServerSentEvent] { () =>
+            eventId.toSeq.flatMap {
+              evid => evid.toLong.to(System.currentTimeMillis).by(1000L)
+                .map(Instant.ofEpochMilli)
+                .map(dateTimeToServerSentEvent)
+            }.toIterator
+          } concat Source(ActorPublisher[ServerSentEvent](timeEventPublisher))
+        }
       }
     }
   }
 
-  implicit def dateTimeToServerSentEvent(time: LocalTime): ServerSentEvent = ServerSentEvent(
-    DateTimeFormatter.ISO_LOCAL_TIME.format(time)
+
+  implicit def dateTimeToServerSentEvent(time: Instant): ServerSentEvent = ServerSentEvent(
+    data = DateTimeFormatter.ISO_LOCAL_TIME.format(ZonedDateTime.ofInstant(time, ZoneId.systemDefault())), id = Some(time.toEpochMilli.toString)
   )
 }
